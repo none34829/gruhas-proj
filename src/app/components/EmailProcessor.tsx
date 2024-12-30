@@ -288,35 +288,53 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
         setEmailDetails(validDetails);
         
         const emailContent = `
-          <div style="font-family: Arial, sans-serif;">
-            <h3 style="color: #2e7d32; margin-bottom: 20px;">Found ${validDetails.length} emails with attachments from ${domain}</h3>
+          <div style="font-family: 'Segoe UI', system-ui, sans-serif;">
+            <div style="margin-bottom: 24px; padding: 16px; background: #e3f2fd; border-radius: 8px; color: #1565c0;">
+              <h3 style="margin: 0; font-size: 18px;">Found ${validDetails.length} emails with attachments from ${domain}</h3>
+            </div>
             ${validDetails.map((detail, i) => `
-              <div style="background: #f5f5f5; padding: 15px; margin-bottom: 15px; border-radius: 4px;">
-                <div style="font-size: 16px; margin-bottom: 8px;">
-                  <strong>${i + 1}. From:</strong> ${detail.fromName} 
-                  ${detail.fromEmail ? `<span style="color: #666;">&lt;${detail.fromEmail}&gt;</span>` : ''}
-                </div>
-                <div style="color: #666; margin-bottom: 8px;">
-                  <strong>Date:</strong> ${detail.formattedDate} (IST)
-                </div>
-                <div style="margin-bottom: 8px;">
-                  <strong>Subject:</strong> ${detail.subject}
-                </div>
-                <div>
-                  <strong>Attachments:</strong> 
-                  ${detail.attachments.length > 0 ? `
-                    <div style="margin-left: 20px; margin-top: 5px;">
-                      ${detail.attachments.map((att, index) => `
-                        <div style="margin-bottom: 4px;">
-                          ${index + 1}. <a 
-                            href="#" 
-                            onclick="downloadAttachment('${att.messageId}', '${att.attachmentId}', '${att.filename}'); return false;"
-                            style="color: #1976d2; text-decoration: underline;"
-                          >${att.filename}</a>
-                        </div>
-                      `).join('')}
+              <div style="background: #fff; padding: 20px; margin-bottom: 16px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                <div style="display: flex; align-items: center; margin-bottom: 12px;">
+                  <div style="width: 32px; height: 32px; background: #e3f2fd; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 12px;">
+                    <span style="color: #1565c0; font-weight: 600;">${i + 1}</span>
+                  </div>
+                  <div style="flex-grow: 1;">
+                    <div style="font-size: 16px; font-weight: 500; color: #1565c0;">
+                      ${detail.fromName} 
+                      ${detail.fromEmail ? `<span style="font-weight: normal; color: #666; font-size: 14px;">&lt;${detail.fromEmail}&gt;</span>` : ''}
                     </div>
-                  ` : 'No attachments'}
+                  </div>
+                </div>
+                <div style="margin-left: 44px;">
+                  <div style="color: #666; margin-bottom: 8px; font-size: 14px;">
+                    <strong style="color: #444;">Date:</strong> ${detail.formattedDate} (IST)
+                  </div>
+                  <div style="margin-bottom: 12px; font-size: 15px;">
+                    <strong style="color: #444;">Subject:</strong> ${detail.subject}
+                  </div>
+                  <div>
+                    <strong style="color: #444;">Attachments:</strong>
+                    ${detail.attachments.length > 0 ? `
+                      <div style="margin-top: 8px; margin-left: 8px;">
+                        ${detail.attachments.map((att, index) => `
+                          <div style="margin-bottom: 8px; display: flex; align-items: center;">
+                            <span style="width: 24px; height: 24px; background: #f5f5f5; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 8px; font-size: 12px; color: #666;">
+                              ${index + 1}
+                            </span>
+                            <a 
+                              href="#" 
+                              onclick="downloadAttachment('${att.messageId}', '${att.attachmentId}', '${att.filename}'); return false;"
+                              style="color: #1976d2; text-decoration: none; font-size: 14px; display: flex; align-items: center;"
+                              onmouseover="this.style.textDecoration='underline'"
+                              onmouseout="this.style.textDecoration='none'"
+                            >
+                              ${att.filename}
+                            </a>
+                          </div>
+                        `).join('')}
+                      </div>
+                    ` : '<span style="color: #666; font-style: italic;">No attachments</span>'}
+                  </div>
                 </div>
               </div>
             `).join('')}
@@ -339,7 +357,7 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
   return (
     <Box sx={{ mt: 2 }}>
       {loading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200 }}>
           <CircularProgress />
         </Box>
       ) : (
@@ -354,14 +372,31 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
             placeholder="e.g., Gruhas"
             helperText="Enter domain (e.g., 'gruhas.com') or company name will be converted to domain format"
             error={!!error}
+            sx={{
+              '& .MuiOutlinedInput-root': {
+                borderRadius: 2,
+                backgroundColor: '#fff',
+              }
+            }}
           />
           
           <Button
             fullWidth
             variant="contained"
             onClick={processEmails}
-            disabled={!companyName}
-            sx={{ mt: 3, mb: 2 }}
+            disabled={!companyName || loading}
+            sx={{
+              mt: 3,
+              mb: 2,
+              py: 1.5,
+              borderRadius: 2,
+              textTransform: 'none',
+              fontSize: '1rem',
+              backgroundColor: '#1a73e8',
+              '&:hover': {
+                backgroundColor: '#1557b0'
+              }
+            }}
           >
             Process Emails
           </Button>
@@ -370,44 +405,72 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
 
       {status && (
         <>
-          <Box sx={{ mt: 2 }}>
-            <Alert 
-              severity="success"
-              sx={{
-                '& .MuiAlert-message': {
-                  width: '100%'
-                }
-              }}
-            >
-              <div dangerouslySetInnerHTML={{ __html: status }} />
-            </Alert>
+          <Box sx={{ mt: 3 }}>
+            <div dangerouslySetInnerHTML={{ __html: status }} />
           </Box>
           
           {emailDetails.length > 0 && (
-            <Box sx={{ mt: 2, display: 'flex', gap: 2, alignItems: 'center' }}>
+            <Box 
+              sx={{ 
+                mt: 3,
+                display: 'flex',
+                gap: 2,
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                backgroundColor: '#f8f9fa',
+                p: 2,
+                borderRadius: 2
+              }}
+            >
               <Button
                 variant="contained"
                 color="primary"
                 onClick={() => setShowFolderDialog(true)}
                 disabled={loading}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: 2,
+                  py: 1.5,
+                  px: 3,
+                  backgroundColor: '#1a73e8',
+                  '&:hover': {
+                    backgroundColor: '#1557b0'
+                  }
+                }}
               >
                 Move Attachments to Drive
               </Button>
               
               {showFolderDialog && (
-                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexGrow: 1 }}>
                   <TextField
                     size="small"
                     label="Folder Name"
                     value={folderName}
                     onChange={(e) => setFolderName(e.target.value)}
                     placeholder={getDomain(companyName)}
+                    sx={{
+                      flexGrow: 1,
+                      '& .MuiOutlinedInput-root': {
+                        borderRadius: 2,
+                        backgroundColor: '#fff'
+                      }
+                    }}
                   />
                   <Button
                     variant="contained"
                     color="primary"
                     onClick={() => createDriveFolder(folderName || getDomain(companyName))}
                     disabled={loading}
+                    sx={{
+                      textTransform: 'none',
+                      borderRadius: 2,
+                      py: 1.5,
+                      backgroundColor: '#34a853',
+                      '&:hover': {
+                        backgroundColor: '#2d8d47'
+                      }
+                    }}
                   >
                     Create & Move
                   </Button>
@@ -415,6 +478,17 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
                     variant="outlined"
                     onClick={() => setShowFolderDialog(false)}
                     disabled={loading}
+                    sx={{
+                      textTransform: 'none',
+                      borderRadius: 2,
+                      py: 1.5,
+                      borderColor: '#dadce0',
+                      color: '#3c4043',
+                      '&:hover': {
+                        borderColor: '#dadce0',
+                        backgroundColor: '#f1f3f4'
+                      }
+                    }}
                   >
                     Cancel
                   </Button>
@@ -424,9 +498,18 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
           )}
         </>
       )}
-      
+
       {error && (
-        <Alert severity="error" sx={{ mt: 2 }}>
+        <Alert 
+          severity="error" 
+          sx={{ 
+            mt: 2,
+            borderRadius: 2,
+            '& .MuiAlert-message': {
+              width: '100%'
+            }
+          }}
+        >
           {error}
         </Alert>
       )}

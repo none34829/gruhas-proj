@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Box, Container, Typography, Paper } from '@mui/material';
+import { Box, Container, Typography, Paper, CircularProgress } from '@mui/material';
 import Image from 'next/image';
 import { Button } from '@mui/material';
 import EmailProcessor from './components/EmailProcessor';
@@ -14,9 +14,9 @@ const config = {
 export default function Home() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [googleLoaded, setGoogleLoaded] = useState(false);
-  const [accessToken, setAccessToken] = useState('');
+  const [accessToken, setAccessToken] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     const initializeGoogleSignIn = () => {
@@ -77,72 +77,267 @@ export default function Home() {
   };
 
   return (
-    <Container maxWidth="sm">
-      <Box sx={{ 
-        mt: 8, 
-        display: 'flex', 
-        flexDirection: 'column', 
-        alignItems: 'center' 
-      }}>
-        <Paper elevation={3} sx={{ p: 4, width: '100%', maxWidth: 500 }}>
-          <Typography variant="h4" component="h1" gutterBottom align="center" sx={{ mb: 4 }}>
-            Email Attachment Manager
-          </Typography>
-          
-          {!isAuthenticated ? (
-            <Box sx={{ 
-              display: 'flex', 
-              flexDirection: 'column', 
+    <>
+      <Box
+        sx={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'linear-gradient(125deg, #1a73e8 0%, #34a853 50%, #4285f4 100%)',
+          opacity: 0.1,
+          zIndex: -2,
+        }}
+      />
+      <Box
+        sx={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          overflow: 'hidden',
+          zIndex: -1,
+          '&::before, &::after': {
+            content: '""',
+            position: 'absolute',
+            width: '600px',
+            height: '600px',
+            borderRadius: '50%',
+            background: 'radial-gradient(circle, rgba(26,115,232,0.2) 0%, rgba(26,115,232,0) 70%)',
+            animation: 'float 20s infinite linear',
+          },
+          '&::before': {
+            top: '-300px',
+            left: '-300px',
+          },
+          '&::after': {
+            bottom: '-300px',
+            right: '-300px',
+            background: 'radial-gradient(circle, rgba(52,168,83,0.2) 0%, rgba(52,168,83,0) 70%)',
+          },
+          '@keyframes float': {
+            '0%': {
+              transform: 'rotate(0deg) translate(100px) rotate(0deg)',
+            },
+            '100%': {
+              transform: 'rotate(360deg) translate(100px) rotate(-360deg)',
+            },
+          },
+        }}
+      >
+        <svg width="100%" height="100%" style={{ opacity: 0.3 }}>
+          <pattern
+            id="pattern-circles"
+            x="0"
+            y="0"
+            width="40"
+            height="40"
+            patternUnits="userSpaceOnUse"
+            patternTransform="rotate(45)"
+          >
+            <circle cx="20" cy="20" r="1" fill="#1a73e8" />
+          </pattern>
+          <rect width="100%" height="100%" fill="url(#pattern-circles)" />
+        </svg>
+      </Box>
+      <Container maxWidth="md">
+        <Box
+          sx={{
+            minHeight: '100vh',
+            py: 8,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 4,
+            position: 'relative'
+          }}
+        >
+          <Paper
+            elevation={3}
+            sx={{
+              width: '100%',
+              p: 4,
+              display: 'flex',
+              flexDirection: 'column',
               alignItems: 'center',
-              gap: 2 
-            }}>
-              <Typography variant="body1" align="center" sx={{ mb: 2 }}>
-                Sign in with Google to manage your email attachments
-              </Typography>
-              
-              <Button
-                variant="contained"
-                onClick={handleGoogleSignIn}
-                disabled={!googleLoaded || isLoading}
+              borderRadius: 2,
+              background: 'rgba(255, 255, 255, 0.9)',
+              backdropFilter: 'blur(10px)',
+              boxShadow: '0 8px 32px rgba(0, 0, 0, 0.1)',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+            }}
+          >
+            <Typography
+              variant="h4"
+              component="h1"
+              gutterBottom
+              sx={{
+                fontWeight: 600,
+                color: '#1a73e8',
+                textAlign: 'center',
+                mb: 3
+              }}
+            >
+              Email Attachment Manager
+            </Typography>
+
+            {!isAuthenticated ? (
+              <Box
                 sx={{
-                  backgroundColor: '#fff',
-                  color: '#757575',
-                  textTransform: 'none',
-                  px: 4,
-                  py: 1,
+                  width: '100%',
                   display: 'flex',
+                  flexDirection: 'column',
                   alignItems: 'center',
-                  gap: 2,
-                  '&:hover': {
-                    backgroundColor: '#f5f5f5'
+                  gap: 3
+                }}
+              >
+                <Typography
+                  variant="body1"
+                  color="text.secondary"
+                  sx={{ textAlign: 'center', mb: 2 }}
+                >
+                  Sign in with Google to manage your email attachments
+                </Typography>
+
+                <Button
+                  variant="contained"
+                  onClick={handleGoogleSignIn}
+                  disabled={!googleLoaded || isLoading}
+                  sx={{
+                    py: 1.5,
+                    px: 4,
+                    borderRadius: 2,
+                    textTransform: 'none',
+                    fontSize: '1rem',
+                    backgroundColor: '#1a73e8',
+                    '&:hover': {
+                      backgroundColor: '#1557b0'
+                    },
+                    display: 'flex',
+                    gap: 2,
+                    alignItems: 'center',
+                    color: '#fff'
+                  }}
+                >
+                  <Image
+                    src="/google-signin.svg"
+                    alt="Google"
+                    width={18}
+                    height={18}
+                    priority
+                    style={{ marginRight: '8px' }}
+                  />
+                  Sign in with Google
+                </Button>
+
+                {(isLoading && !googleLoaded) && (
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: 'text.secondary',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1
+                    }}
+                  >
+                    <CircularProgress size={16} />
+                    Loading Google Sign-In...
+                  </Typography>
+                )}
+
+                {error && (
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: 'error.main',
+                      bgcolor: 'error.light',
+                      p: 1,
+                      borderRadius: 1,
+                      width: '100%',
+                      textAlign: 'center'
+                    }}
+                  >
+                    {error}
+                  </Typography>
+                )}
+              </Box>
+            ) : (
+              <EmailProcessor accessToken={accessToken} />
+            )}
+          </Paper>
+
+          <Box
+            sx={{
+              position: 'fixed',
+              bottom: 0,
+              left: 0,
+              right: 0,
+              py: 2,
+              bgcolor: 'rgba(255, 255, 255, 0.9)',
+              backdropFilter: 'blur(10px)',
+              borderTop: '1px solid rgba(255, 255, 255, 0.2)',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              gap: 1,
+              boxShadow: '0 -4px 32px rgba(0, 0, 0, 0.05)',
+            }}
+          >
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 0.5,
+                fontSize: '0.875rem'
+              }}
+            >
+              Made with 
+              <Box
+                component="span"
+                sx={{
+                  color: '#e25555',
+                  animation: 'heartBeat 1.2s ease-in-out infinite',
+                  display: 'inline-block',
+                  '@keyframes heartBeat': {
+                    '0%': {
+                      transform: 'scale(1)',
+                    },
+                    '14%': {
+                      transform: 'scale(1.3)',
+                    },
+                    '28%': {
+                      transform: 'scale(1)',
+                    },
+                    '42%': {
+                      transform: 'scale(1.3)',
+                    },
+                    '70%': {
+                      transform: 'scale(1)',
+                    },
                   }
                 }}
               >
-                <Image
-                  src="/google-logo.svg"
-                  alt="Google Logo"
-                  width={20}
-                  height={20}
-                  priority
-                />
-                Sign in with Google
-              </Button>
-              {(isLoading && !googleLoaded) && (
-                <Typography variant="body2" color="text.secondary">
-                  Loading Google Sign-In...
-                </Typography>
-              )}
-              {error && (
-                <Typography variant="body2" color="error.main">
-                  {error}
-                </Typography>
-              )}
-            </Box>
-          ) : (
-            <EmailProcessor accessToken={accessToken} />
-          )}
-        </Paper>
-      </Box>
-    </Container>
+                ❤️
+              </Box>
+              at
+              <Typography
+                component="span"
+                sx={{
+                  color: '#1a73e8',
+                  fontWeight: 600,
+                  ml: 0.5
+                }}
+              >
+                Gruhas
+              </Typography>
+            </Typography>
+          </Box>
+        </Box>
+      </Container>
+    </>
   );
 }
