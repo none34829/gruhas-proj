@@ -54,7 +54,7 @@ export default function Home() {
       
       client.initTokenClient({
         client_id: config.clientId,
-        scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email',
+        scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive',
         callback: (response: any) => {
           if (response.access_token) {
             setAccessToken(response.access_token);

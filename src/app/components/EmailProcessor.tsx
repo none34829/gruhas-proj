@@ -23,6 +23,9 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
+  const [emailDetails, setEmailDetails] = useState<any[]>([]);
+  const [folderName, setFolderName] = useState('');
+  const [showFolderDialog, setShowFolderDialog] = useState(false);
 
   const getDomain = (input: string): string => {
     if (input.includes('.')) {
@@ -97,6 +100,91 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
     } catch (err) {
       console.error('Error downloading attachment:', err);
       setError('Failed to download attachment. Please try again.');
+    }
+  };
+
+  const createDriveFolder = async (customFolderName: string) => {
+    try {
+      setLoading(true);
+      // Create folder
+      const folderResponse = await fetch('https://www.googleapis.com/drive/v3/files', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: customFolderName,
+          mimeType: 'application/vnd.google-apps.folder'
+        })
+      });
+
+      if (!folderResponse.ok) {
+        throw new Error('Failed to create folder');
+      }
+
+      const folder = await folderResponse.json();
+      
+      // Upload each attachment to the folder
+      for (const email of emailDetails) {
+        for (const attachment of email.attachments) {
+          // Get attachment content
+          const attachmentResponse = await fetch(
+            `https://www.googleapis.com/gmail/v1/users/me/messages/${attachment.messageId}/attachments/${attachment.attachmentId}`,
+            {
+              headers: {
+                'Authorization': `Bearer ${accessToken}`
+              }
+            }
+          );
+
+          if (!attachmentResponse.ok) {
+            console.error(`Failed to fetch attachment: ${attachment.filename}`);
+            continue;
+          }
+
+          const attachmentData = await attachmentResponse.json();
+          const binaryData = atob(attachmentData.data.replace(/-/g, '+').replace(/_/g, '/'));
+          const bytes = new Uint8Array(binaryData.length);
+          for (let i = 0; i < binaryData.length; i++) {
+            bytes[i] = binaryData.charCodeAt(i);
+          }
+
+          // Upload to Drive
+          const metadata = {
+            name: attachment.filename,
+            parents: [folder.id]
+          };
+
+          const form = new FormData();
+          form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+          form.append('file', new Blob([bytes]));
+
+          const uploadResponse = await fetch(
+            'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+            {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${accessToken}`
+              },
+              body: form
+            }
+          );
+
+          if (!uploadResponse.ok) {
+            console.error(`Failed to upload: ${attachment.filename}`);
+          }
+        }
+      }
+
+      setStatus(prev => `${prev}\n\n✅ All attachments have been moved to Google Drive folder: "${customFolderName}"`);
+      setShowFolderDialog(false);
+      setFolderName('');
+    } catch (err) {
+      console.error('Error moving to Drive:', err);
+      setError('Failed to move attachments to Drive. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -197,6 +285,7 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
       
       if (validDetails.length > 0) {
         validDetails.sort((a, b) => b.dateForSort - a.dateForSort);
+        setEmailDetails(validDetails);
         
         const emailContent = `
           <div style="font-family: Arial, sans-serif;">
@@ -280,20 +369,62 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
       )}
 
       {status && (
-        <Box sx={{ mt: 2 }}>
-          <Alert 
-            severity="success"
-            sx={{
-              '& .MuiAlert-message': {
-                width: '100%'
-              }
-            }}
-          >
-            <div dangerouslySetInnerHTML={{ __html: status }} />
-          </Alert>
-        </Box>
+        <>
+          <Box sx={{ mt: 2 }}>
+            <Alert 
+              severity="success"
+              sx={{
+                '& .MuiAlert-message': {
+                  width: '100%'
+                }
+              }}
+            >
+              <div dangerouslySetInnerHTML={{ __html: status }} />
+            </Alert>
+          </Box>
+          
+          {emailDetails.length > 0 && (
+            <Box sx={{ mt: 2, display: 'flex', gap: 2, alignItems: 'center' }}>
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={() => setShowFolderDialog(true)}
+                disabled={loading}
+              >
+                Move Attachments to Drive
+              </Button>
+              
+              {showFolderDialog && (
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                  <TextField
+                    size="small"
+                    label="Folder Name"
+                    value={folderName}
+                    onChange={(e) => setFolderName(e.target.value)}
+                    placeholder={getDomain(companyName)}
+                  />
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    onClick={() => createDriveFolder(folderName || getDomain(companyName))}
+                    disabled={loading}
+                  >
+                    Create & Move
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    onClick={() => setShowFolderDialog(false)}
+                    disabled={loading}
+                  >
+                    Cancel
+                  </Button>
+                </Box>
+              )}
+            </Box>
+          )}
+        </>
       )}
-
+      
       {error && (
         <Alert severity="error" sx={{ mt: 2 }}>
           {error}
