@@ -1,101 +1,148 @@
-import Image from "next/image";
+'use client';
+
+import { useState, useEffect } from 'react';
+import { Box, Container, Typography, Paper } from '@mui/material';
+import Image from 'next/image';
+import { Button } from '@mui/material';
+import EmailProcessor from './components/EmailProcessor';
+
+const config = {
+    clientId: '341481391326-253sju86761fgk7pkkf6tlgievnj5eqp.apps.googleusercontent.com',
+    apiKey: 'AIzaSyBPKu02MYi7QBnIogUY73G0g6wUgtF7A40',
+};
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [googleLoaded, setGoogleLoaded] = useState(false);
+  const [accessToken, setAccessToken] = useState('');
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+  useEffect(() => {
+    const initializeGoogleSignIn = () => {
+      if (typeof window !== 'undefined' && window.google?.accounts?.oauth2) {
+        setGoogleLoaded(true);
+        setIsLoading(false);
+      } else {
+        // Check again in 500ms
+        setTimeout(initializeGoogleSignIn, 500);
+      }
+    };
+
+    // Start checking for Google Sign-In
+    initializeGoogleSignIn();
+
+    // Set a timeout to stop checking after 10 seconds
+    const timeoutId = setTimeout(() => {
+      setIsLoading(false);
+      if (!googleLoaded) {
+        setError('Google Sign-In failed to load. Please refresh the page.');
+      }
+    }, 10000);
+
+    return () => clearTimeout(timeoutId);
+  }, [googleLoaded]);
+
+  const handleGoogleSignIn = () => {
+    if (!window.google?.accounts?.oauth2) {
+      setError('Google Sign-In is not available');
+      return;
+    }
+
+    try {
+      const client = window.google.accounts.oauth2;
+      
+      client.initTokenClient({
+        client_id: config.clientId,
+        scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email',
+        callback: (response: any) => {
+          if (response.access_token) {
+            setAccessToken(response.access_token);
+            setIsAuthenticated(true);
+            setError('');
+            console.log('Authentication successful');
+          } else {
+            setError('Failed to get access token');
+          }
+        },
+        error_callback: (error: any) => {
+          console.error('Google Sign-In error:', error);
+          setError('Failed to sign in with Google');
+        }
+      }).requestAccessToken();
+    } catch (err) {
+      console.error('Error initializing Google Sign-In:', err);
+      setError('Failed to initialize Google Sign-In');
+    }
+  };
+
+  return (
+    <Container maxWidth="sm">
+      <Box sx={{ 
+        mt: 8, 
+        display: 'flex', 
+        flexDirection: 'column', 
+        alignItems: 'center' 
+      }}>
+        <Paper elevation={3} sx={{ p: 4, width: '100%', maxWidth: 500 }}>
+          <Typography variant="h4" component="h1" gutterBottom align="center" sx={{ mb: 4 }}>
+            Email Attachment Manager
+          </Typography>
+          
+          {!isAuthenticated ? (
+            <Box sx={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center',
+              gap: 2 
+            }}>
+              <Typography variant="body1" align="center" sx={{ mb: 2 }}>
+                Sign in with Google to manage your email attachments
+              </Typography>
+              
+              <Button
+                variant="contained"
+                onClick={handleGoogleSignIn}
+                disabled={!googleLoaded || isLoading}
+                sx={{
+                  backgroundColor: '#fff',
+                  color: '#757575',
+                  textTransform: 'none',
+                  px: 4,
+                  py: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 2,
+                  '&:hover': {
+                    backgroundColor: '#f5f5f5'
+                  }
+                }}
+              >
+                <Image
+                  src="/google-logo.svg"
+                  alt="Google Logo"
+                  width={20}
+                  height={20}
+                  priority
+                />
+                Sign in with Google
+              </Button>
+              {(isLoading && !googleLoaded) && (
+                <Typography variant="body2" color="text.secondary">
+                  Loading Google Sign-In...
+                </Typography>
+              )}
+              {error && (
+                <Typography variant="body2" color="error.main">
+                  {error}
+                </Typography>
+              )}
+            </Box>
+          ) : (
+            <EmailProcessor accessToken={accessToken} />
+          )}
+        </Paper>
+      </Box>
+    </Container>
   );
 }
