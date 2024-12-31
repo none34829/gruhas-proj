@@ -6,15 +6,34 @@ import Image from 'next/image';
 import { Button } from '@mui/material';
 import EmailProcessor from './components/EmailProcessor';
 
+declare global {
+  interface Window {
+    google?: {
+      accounts?: {
+        oauth2?: {
+          initTokenClient: (config: {
+            client_id: string;
+            scope: string;
+            callback: (response: { access_token?: string }) => void;
+            error_callback: (error: unknown) => void;
+          }) => {
+            requestAccessToken: () => void;
+          };
+        };
+      };
+    };
+  }
+}
+
 const config = {
-    clientId: '341481391326-253sju86761fgk7pkkf6tlgievnj5eqp.apps.googleusercontent.com',
-    apiKey: 'AIzaSyBPKu02MYi7QBnIogUY73G0g6wUgtF7A40',
+  clientId: '341481391326-253sju86761fgk7pkkf6tlgievnj5eqp.apps.googleusercontent.com',
+  apiKey: 'AIzaSyBPKu02MYi7QBnIogUY73G0g6wUgtF7A40',
 };
 
 export default function Home() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [googleLoaded, setGoogleLoaded] = useState(false);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [accessToken, setAccessToken] = useState<string>('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -55,7 +74,7 @@ export default function Home() {
       client.initTokenClient({
         client_id: config.clientId,
         scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive',
-        callback: (response: any) => {
+        callback: (response) => {
           if (response.access_token) {
             setAccessToken(response.access_token);
             setIsAuthenticated(true);
@@ -65,7 +84,7 @@ export default function Home() {
             setError('Failed to get access token');
           }
         },
-        error_callback: (error: any) => {
+        error_callback: (error) => {
           console.error('Google Sign-In error:', error);
           setError('Failed to sign in with Google');
         }

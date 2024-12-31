@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { TextField, Button, Alert, CircularProgress, Box } from '@mui/material';
+import ChatAnalyzer from './ChatAnalyzer';
 
 interface EmailProcessorProps {
   accessToken: string;
@@ -19,27 +20,51 @@ interface GmailHeader {
 }
 
 export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
-  const [companyName, setCompanyName] = useState('');
+  const [searchInput, setSearchInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [emailDetails, setEmailDetails] = useState<any[]>([]);
   const [folderName, setFolderName] = useState('');
   const [showFolderDialog, setShowFolderDialog] = useState(false);
+  const [currentFolder, setCurrentFolder] = useState<{ id: string; name: string } | null>(null);
+  const [moveProgress, setMoveProgress] = useState(0);
+  const [isMoving, setIsMoving] = useState(false);
 
-  const getDomain = (input: string): string => {
-    if (input.includes('.')) {
-      return input.toLowerCase();
-    }
-    return input.toLowerCase()
-      .replace(/[^a-z0-9]/g, '')
-      + '.com';
+  const isValidEmail = (email: string): boolean => {
+    const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    return emailPattern.test(email);
   };
 
-  const validateInput = (input: string) => {
+  const isValidDomain = (domain: string): boolean => {
     const domainPattern = /^[a-zA-Z0-9]+([-.][a-zA-Z0-9]+)*\.[a-zA-Z]{2,}$/;
-    const companyPattern = /^[a-zA-Z0-9]+(?:[ -][a-zA-Z0-9]+)*$/;
-    return domainPattern.test(input) || companyPattern.test(input);
+    return domainPattern.test(domain);
+  };
+
+  const validateInput = (input: string): boolean => {
+    // Allow email addresses, domains, or company names
+    return isValidEmail(input) || isValidDomain(input) || /^[a-zA-Z0-9]+(?:[ -][a-zA-Z0-9]+)*$/.test(input);
+  };
+
+  const getSearchQuery = (input: string): string => {
+    if (isValidEmail(input)) {
+      // If it's an email address, search for emails from that specific address
+      return `from:${input}`;
+    } else if (isValidDomain(input)) {
+      // If it's a domain, search for emails from that domain
+      return `from:*@${input}`;
+    } else {
+      // If it's a company name, convert to domain and search
+      const domainExtensions = ['.com', '.org', '.net', '.edu', '.gov', '.co', '.io', '.ai', '.biz', '.info', 
+        '.ca', '.uk', '.de', '.fr', '.jp', '.cn', '.au', '.in', '.br', '.mx', '.ru', '.es', '.it', '.nl', 
+        '.ch', '.se', '.no', '.dk', '.fi', '.pl', '.cz', '.at', '.be', '.ie', '.nz', '.sg', '.hk', '.kr', 
+        '.tr', '.za', '.pt', '.gr', '.hu', '.ro', '.il', '.th', '.my', '.ph', '.vn', '.id', '.cl', '.ar', 
+        '.co.uk', '.co.jp', '.com.au', '.co.in', '.com.br', '.com.mx', '.co.za', '.com.sg', '.com.ph', 
+        '.com.my', '.com.vn', '.com.ar', '.com.tr', '.org.uk', '.net.au', '.bike'];
+      const baseDomain = input.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const queries = domainExtensions.map(ext => `from:*@${baseDomain}${ext}`);
+      return queries.join(' OR ');
+    }
   };
 
   const formatDateToIST = (dateStr: string) => {
@@ -105,7 +130,10 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
 
   const createDriveFolder = async (customFolderName: string) => {
     try {
+      setIsMoving(true);
+      setMoveProgress(0);
       setLoading(true);
+      
       // Create folder
       const folderResponse = await fetch('https://www.googleapis.com/drive/v3/files', {
         method: 'POST',
@@ -124,7 +152,12 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
       }
 
       const folder = await folderResponse.json();
-      
+      setCurrentFolder({ id: folder.id, name: customFolderName });
+
+      // Calculate total attachments for progress
+      const totalAttachments = emailDetails.reduce((sum, email) => sum + email.attachments.length, 0);
+      let processedAttachments = 0;
+
       // Upload each attachment to the folder
       for (const email of emailDetails) {
         for (const attachment of email.attachments) {
@@ -174,6 +207,10 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
           if (!uploadResponse.ok) {
             console.error(`Failed to upload: ${attachment.filename}`);
           }
+
+          // Update progress
+          processedAttachments++;
+          setMoveProgress(Math.round((processedAttachments / totalAttachments) * 100));
         }
       }
 
@@ -185,12 +222,14 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
       setError('Failed to move attachments to Drive. Please try again.');
     } finally {
       setLoading(false);
+      setIsMoving(false);
+      setMoveProgress(0);
     }
   };
 
   const processEmails = async () => {
-    if (!validateInput(companyName)) {
-      setError('Please enter a valid company name (e.g., "Gruhas") or domain (e.g., "gruhas.com")');
+    if (!validateInput(searchInput)) {
+      setError('Please enter a valid email address (e.g., "user@gruhas.com"), domain (e.g., "gruhas.com"), or company name');
       return;
     }
 
@@ -199,8 +238,7 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
     setStatus('');
 
     try {
-      const domain = getDomain(companyName);
-      const searchQuery = encodeURIComponent(`has:attachment from:*@${domain}`);
+      const searchQuery = encodeURIComponent(`has:attachment ${getSearchQuery(searchInput)}`);
       console.log('Search query:', decodeURIComponent(searchQuery));
 
       let allMessages = [];
@@ -226,11 +264,11 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
       } while (pageToken);
 
       if (allMessages.length === 0) {
-        setStatus(`No emails found with attachments from ${domain}`);
+        setStatus(`No emails found with attachments from ${searchInput}`);
         return;
       }
 
-      setStatus(`Found ${allMessages.length} emails with attachments from ${domain}`);
+      setStatus(`Found ${allMessages.length} emails with attachments from ${searchInput}`);
       
       const emailDetails = await Promise.all(
         allMessages.map(async (msg: any) => {
@@ -290,7 +328,7 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
         const emailContent = `
           <div style="font-family: 'Segoe UI', system-ui, sans-serif;">
             <div style="margin-bottom: 24px; padding: 16px; background: #e3f2fd; border-radius: 8px; color: #1565c0;">
-              <h3 style="margin: 0; font-size: 18px;">Found ${validDetails.length} emails with attachments from ${domain}</h3>
+              <h3 style="margin: 0; font-size: 18px;">Found ${validDetails.length} emails with attachments from ${searchInput}</h3>
             </div>
             ${validDetails.map((detail, i) => `
               <div style="background: #fff; padding: 20px; margin-bottom: 16px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
@@ -356,52 +394,46 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
 
   return (
     <Box sx={{ mt: 2 }}>
-      {loading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200 }}>
-          <CircularProgress />
-        </Box>
-      ) : (
-        <>
-          <TextField
-            fullWidth
-            label="Company Name or Domain"
-            value={companyName}
-            onChange={(e) => setCompanyName(e.target.value)}
-            margin="normal"
-            variant="outlined"
-            placeholder="e.g., Gruhas"
-            helperText="Enter domain (e.g., 'gruhas.com') or company name will be converted to domain format"
-            error={!!error}
-            sx={{
-              '& .MuiOutlinedInput-root': {
-                borderRadius: 2,
-                backgroundColor: '#fff',
-              }
-            }}
-          />
-          
-          <Button
-            fullWidth
-            variant="contained"
-            onClick={processEmails}
-            disabled={!companyName || loading}
-            sx={{
-              mt: 3,
-              mb: 2,
-              py: 1.5,
+      <>
+        <TextField
+          fullWidth
+          label="Email Address, Domain, or Company Name"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          margin="normal"
+          variant="outlined"
+          placeholder="e.g., user@gruhas.com, gruhas.com, or Gruhas"
+          helperText="Enter an email address (e.g., 'user@gruhas.com'), domain (e.g., 'gruhas.com'), or company name (e.g., 'Gruhas/gruhas/GrUhAs/gRuHaS/etc.')"
+          error={!!error}
+          sx={{
+            '& .MuiOutlinedInput-root': {
               borderRadius: 2,
-              textTransform: 'none',
-              fontSize: '1rem',
-              backgroundColor: '#1a73e8',
-              '&:hover': {
-                backgroundColor: '#1557b0'
-              }
-            }}
-          >
-            Process Emails
-          </Button>
-        </>
-      )}
+              backgroundColor: '#fff',
+            }
+          }}
+        />
+        
+        <Button
+          fullWidth
+          variant="contained"
+          onClick={processEmails}
+          disabled={!searchInput || loading}
+          sx={{
+            mt: 3,
+            mb: 2,
+            py: 1.5,
+            borderRadius: 2,
+            textTransform: 'none',
+            fontSize: '1rem',
+            backgroundColor: '#1a73e8',
+            '&:hover': {
+              backgroundColor: '#1557b0'
+            }
+          }}
+        >
+          Process Emails
+        </Button>
+      </>
 
       {status && (
         <>
@@ -448,7 +480,7 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
                     label="Folder Name"
                     value={folderName}
                     onChange={(e) => setFolderName(e.target.value)}
-                    placeholder={getDomain(companyName)}
+                    placeholder={searchInput}
                     sx={{
                       flexGrow: 1,
                       '& .MuiOutlinedInput-root': {
@@ -457,27 +489,46 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
                       }
                     }}
                   />
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    onClick={() => createDriveFolder(folderName || getDomain(companyName))}
-                    disabled={loading}
-                    sx={{
-                      textTransform: 'none',
-                      borderRadius: 2,
-                      py: 1.5,
-                      backgroundColor: '#34a853',
-                      '&:hover': {
-                        backgroundColor: '#2d8d47'
-                      }
-                    }}
-                  >
-                    Create & Move
-                  </Button>
+                  <Box sx={{ position: 'relative', display: 'inline-flex' }}>
+                    <Button
+                      variant="contained"
+                      color="primary"
+                      onClick={() => createDriveFolder(folderName || searchInput)}
+                      disabled={isMoving}
+                      sx={{
+                        textTransform: 'none',
+                        borderRadius: 2,
+                        py: 1.5,
+                        backgroundColor: isMoving ? '#f1f3f4' : '#34a853',
+                        '&:hover': {
+                          backgroundColor: isMoving ? '#f1f3f4' : '#2d8d47'
+                        },
+                        minWidth: '120px'
+                      }}
+                    >
+                      {isMoving ? `${moveProgress}%` : 'Create & Move'}
+                    </Button>
+                    {isMoving && (
+                      <Box
+                        sx={{
+                          position: 'absolute',
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          height: '3px',
+                          backgroundColor: '#34a853',
+                          borderBottomLeftRadius: '8px',
+                          borderBottomRightRadius: '8px',
+                          width: `${moveProgress}%`,
+                          transition: 'width 0.3s ease-in-out'
+                        }}
+                      />
+                    )}
+                  </Box>
                   <Button
                     variant="outlined"
                     onClick={() => setShowFolderDialog(false)}
-                    disabled={loading}
+                    disabled={isMoving}
                     sx={{
                       textTransform: 'none',
                       borderRadius: 2,
@@ -497,6 +548,14 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
             </Box>
           )}
         </>
+      )}
+
+      {currentFolder && (
+        <ChatAnalyzer
+          accessToken={accessToken}
+          folderId={currentFolder.id}
+          folderName={currentFolder.name}
+        />
       )}
 
       {error && (
