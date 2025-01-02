@@ -30,6 +30,9 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
   const [currentFolder, setCurrentFolder] = useState<{ id: string; name: string } | null>(null);
   const [moveProgress, setMoveProgress] = useState(0);
   const [isMoving, setIsMoving] = useState(false);
+  const [showOrganizeDialog, setShowOrganizeDialog] = useState(false);
+  const [tempFolderName, setTempFolderName] = useState('');
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   const isValidEmail = (email: string): boolean => {
     const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -133,9 +136,9 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
       setIsMoving(true);
       setMoveProgress(0);
       setLoading(true);
-      
-      // Create folder
-      const folderResponse = await fetch('https://www.googleapis.com/drive/v3/files', {
+
+      // Create main folder
+      const mainFolderResponse = await fetch('https://www.googleapis.com/drive/v3/files', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${accessToken}`,
@@ -147,12 +150,196 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
         })
       });
 
+      if (!mainFolderResponse.ok) {
+        throw new Error('Failed to create main folder');
+      }
+
+      const mainFolder = await mainFolderResponse.json();
+      setCurrentFolder({ id: mainFolder.id, name: customFolderName });
+
+      // Group attachments by year and month
+      const attachmentsByDate: { [year: string]: { [month: string]: { monthName: string, emails: { email: typeof emailDetails[0], attachments: typeof emailDetails[0]['attachments'] }[] } } } = {};
+      
+      emailDetails.forEach(email => {
+        const date = new Date(email.date);
+        const year = date.getFullYear().toString();
+        const monthIndex = date.getMonth();
+        const monthKey = (monthIndex + 1).toString().padStart(2, '0'); // "01" for January
+        const monthName = date.toLocaleString('default', { month: 'long' });
+        const monthDisplay = `${monthKey} - ${monthName}`; // Format: "01 - January"
+
+        if (!attachmentsByDate[year]) {
+          attachmentsByDate[year] = {};
+        }
+        if (!attachmentsByDate[year][monthKey]) {
+          attachmentsByDate[year][monthKey] = {
+            monthName: monthDisplay,
+            emails: []
+          };
+        }
+        attachmentsByDate[year][monthKey].emails.push({ email, attachments: email.attachments });
+      });
+
+      // Calculate total attachments for progress
+      const totalAttachments = emailDetails.reduce((sum, email) => sum + email.attachments.length, 0);
+      let processedAttachments = 0;
+
+      // Create year and month folders and move attachments
+      for (const [year, months] of Object.entries(attachmentsByDate)) {
+        // Create year folder
+        const yearFolderResponse = await fetch('https://www.googleapis.com/drive/v3/files', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: year,
+            mimeType: 'application/vnd.google-apps.folder',
+            parents: [mainFolder.id]
+          })
+        });
+
+        if (!yearFolderResponse.ok) {
+          console.error(`Failed to create folder for year ${year}`);
+          continue;
+        }
+
+        const yearFolder = await yearFolderResponse.json();
+
+        // Process months in order (they're already sorted by monthKey)
+        const sortedMonths = Object.entries(months).sort((a, b) => a[0].localeCompare(b[0]));
+
+        for (const [monthKey, { monthName, emails }] of sortedMonths) {
+          // First create folder with numeric name to maintain order
+          const monthFolderResponse = await fetch('https://www.googleapis.com/drive/v3/files', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              name: monthKey,
+              mimeType: 'application/vnd.google-apps.folder',
+              parents: [yearFolder.id]
+            })
+          });
+
+          if (!monthFolderResponse.ok) {
+            console.error(`Failed to create folder for ${monthName} ${year}`);
+            continue;
+          }
+
+          const monthFolder = await monthFolderResponse.json();
+
+          // Then rename it to the actual month name
+          await fetch(`https://www.googleapis.com/drive/v3/files/${monthFolder.id}`, {
+            method: 'PATCH',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              name: monthName
+            })
+          });
+
+          // Upload attachments to month folder
+          for (const { email, attachments } of emails) {
+            for (const attachment of attachments) {
+              // Get attachment content
+              const attachmentResponse = await fetch(
+                `https://www.googleapis.com/gmail/v1/users/me/messages/${attachment.messageId}/attachments/${attachment.attachmentId}`,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${accessToken}`
+                  }
+                }
+              );
+
+              if (!attachmentResponse.ok) {
+                console.error(`Failed to fetch attachment: ${attachment.filename}`);
+                continue;
+              }
+
+              const attachmentData = await attachmentResponse.json();
+              const binaryData = atob(attachmentData.data.replace(/-/g, '+').replace(/_/g, '/'));
+              const bytes = new Uint8Array(binaryData.length);
+              for (let i = 0; i < binaryData.length; i++) {
+                bytes[i] = binaryData.charCodeAt(i);
+              }
+
+              // Upload to Drive in month folder
+              const metadata = {
+                name: attachment.filename,
+                parents: [monthFolder.id]
+              };
+
+              const form = new FormData();
+              form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+              form.append('file', new Blob([bytes]));
+
+              const uploadResponse = await fetch(
+                'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
+                {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${accessToken}`
+                  },
+                  body: form
+                }
+              );
+
+              if (!uploadResponse.ok) {
+                console.error(`Failed to upload: ${attachment.filename}`);
+              }
+
+              // Update progress
+              processedAttachments++;
+              setMoveProgress(Math.round((processedAttachments / totalAttachments) * 100));
+            }
+          }
+        }
+      }
+
+      setStatus(prev => `${prev}\n\n✅ All attachments have been moved to Google Drive folder: "${customFolderName}" with year and month subfolders`);
+      setShowFolderDialog(false);
+      setFolderName('');
+    } catch (err) {
+      console.error('Error moving to Drive:', err);
+      setError('Failed to move attachments to Drive. Please try again.');
+    } finally {
+      setLoading(false);
+      setIsMoving(false);
+      setMoveProgress(0);
+    }
+  };
+
+  const createFolderWithoutSubfolders = async (folderName: string) => {
+    try {
+      setIsMoving(true);
+      setMoveProgress(0);
+      setLoading(true);
+      
+      // Create folder
+      const folderResponse = await fetch('https://www.googleapis.com/drive/v3/files', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: folderName,
+          mimeType: 'application/vnd.google-apps.folder'
+        })
+      });
+
       if (!folderResponse.ok) {
         throw new Error('Failed to create folder');
       }
 
       const folder = await folderResponse.json();
-      setCurrentFolder({ id: folder.id, name: customFolderName });
+      setCurrentFolder({ id: folder.id, name: folderName });
 
       // Calculate total attachments for progress
       const totalAttachments = emailDetails.reduce((sum, email) => sum + email.attachments.length, 0);
@@ -214,7 +401,7 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
         }
       }
 
-      setStatus(prev => `${prev}\n\n✅ All attachments have been moved to Google Drive folder: "${customFolderName}"`);
+      setStatus(prev => `${prev}\n\n✅ All attachments have been moved to Google Drive folder: "${folderName}"`);
       setShowFolderDialog(false);
       setFolderName('');
     } catch (err) {
@@ -236,6 +423,9 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
     setLoading(true);
     setError('');
     setStatus('');
+    setEmailDetails([]);
+    setShowFolderDialog(false); // Reset folder dialog when searching new email
+    setFolderName(''); // Reset folder name
 
     try {
       const searchQuery = encodeURIComponent(`has:attachment ${getSearchQuery(searchInput)}`);
@@ -392,6 +582,14 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
     }
   };
 
+  const handleChatToggle = (isOpen: boolean) => {
+    setIsChatOpen(isOpen);
+  };
+
+  const handleFolderCreate = () => {
+    setShowFolderDialog(true);
+  };
+
   return (
     <Box sx={{ mt: 2 }}>
       <>
@@ -457,7 +655,7 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
               <Button
                 variant="contained"
                 color="primary"
-                onClick={() => setShowFolderDialog(true)}
+                onClick={handleFolderCreate}
                 disabled={loading}
                 sx={{
                   textTransform: 'none',
@@ -481,6 +679,7 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
                     value={folderName}
                     onChange={(e) => setFolderName(e.target.value)}
                     placeholder={searchInput}
+                    disabled={isMoving} // Disable input while processing
                     sx={{
                       flexGrow: 1,
                       '& .MuiOutlinedInput-root': {
@@ -492,12 +691,13 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
                   <Box sx={{ position: 'relative', display: 'inline-flex' }}>
                     <Button
                       variant="contained"
-                      color="primary"
-                      onClick={() => createDriveFolder(folderName || searchInput)}
+                      onClick={() => {
+                        setTempFolderName(folderName || searchInput);
+                        setShowOrganizeDialog(true);
+                      }}
                       disabled={isMoving}
                       sx={{
                         textTransform: 'none',
-                        borderRadius: 2,
                         py: 1.5,
                         backgroundColor: isMoving ? '#f1f3f4' : '#34a853',
                         '&:hover': {
@@ -545,6 +745,98 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
                   </Button>
                 </Box>
               )}
+
+              {showOrganizeDialog && (
+                <>
+                  <Box
+                    sx={{
+                      position: 'fixed',
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                      backdropFilter: 'blur(4px)',
+                      zIndex: 9998
+                    }}
+                    onClick={() => setShowOrganizeDialog(false)}
+                  />
+                  <Box
+                    sx={{
+                      position: isChatOpen ? 'fixed' : 'absolute',
+                      ...(isChatOpen ? {
+                        top: '60%', // Move it lower when chat is open
+                        transform: 'translate(-50%, -50%)',
+                      } : {
+                        bottom: 50,
+                        transform: 'translateX(-50%)',
+                      }),
+                      left: '50%',
+                      backgroundColor: '#fff',
+                      borderRadius: 2,
+                      boxShadow: '0px 4px 20px rgba(0, 0, 0, 0.1)',
+                      p: 3,
+                      width: '400px',
+                      maxWidth: '90%',
+                      zIndex: 9999
+                    }}
+                  >
+                    <Box sx={{ mb: 2, fontSize: '1.25rem', fontWeight: 500, color: '#1a73e8' }}>
+                      How would you like to organize the attachments?
+                    </Box>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <Button
+                        variant="contained"
+                        onClick={() => {
+                          setShowOrganizeDialog(false);
+                          createDriveFolder(tempFolderName);
+                        }}
+                        sx={{
+                          textTransform: 'none',
+                          py: 1.5,
+                          backgroundColor: '#34a853',
+                          '&:hover': { backgroundColor: '#2d8d47' }
+                        }}
+                      >
+                        Create Year/Month Subfolders
+                      </Button>
+                      <Button
+                        variant="contained"
+                        onClick={() => {
+                          setShowOrganizeDialog(false);
+                          createFolderWithoutSubfolders(tempFolderName);
+                        }}
+                        sx={{
+                          textTransform: 'none',
+                          py: 1.5,
+                          backgroundColor: '#1a73e8',
+                          '&:hover': { backgroundColor: '#1557b0' }
+                        }}
+                      >
+                        Keep All Files in One Folder
+                      </Button>
+                      <Button
+                        variant="outlined"
+                        onClick={() => {
+                          setShowOrganizeDialog(false);
+                        }}
+                        sx={{
+                          textTransform: 'none',
+                          py: 1.5,
+                          borderColor: '#dadce0',
+                          color: '#3c4043',
+                          '&:hover': {
+                            borderColor: '#dadce0',
+                            backgroundColor: '#f1f3f4'
+                          }
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                    </Box>
+                  </Box>
+                </>
+              )}
             </Box>
           )}
         </>
@@ -555,6 +847,7 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
           accessToken={accessToken}
           folderId={currentFolder.id}
           folderName={currentFolder.name}
+          onChatToggle={handleChatToggle}
         />
       )}
 

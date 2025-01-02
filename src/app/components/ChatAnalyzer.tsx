@@ -27,9 +27,10 @@ interface ChatAnalyzerProps {
   accessToken: string;
   folderId: string;
   folderName: string;
+  onChatToggle?: (isOpen: boolean) => void;
 }
 
-export default function ChatAnalyzer({ accessToken, folderId, folderName }: ChatAnalyzerProps) {
+export default function ChatAnalyzer({ accessToken, folderId, folderName, onChatToggle }: ChatAnalyzerProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -42,6 +43,15 @@ export default function ChatAnalyzer({ accessToken, folderId, folderName }: Chat
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  useEffect(() => {
+    // Notify parent that chat is open
+    onChatToggle?.(true);
+    return () => {
+      // Notify parent that chat is closed
+      onChatToggle?.(false);
+    };
+  }, [onChatToggle]);
 
   const analyzeFiles = async (query: string) => {
     try {
