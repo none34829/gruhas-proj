@@ -1,8 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { TextField, Button, Alert, CircularProgress, Box } from '@mui/material';
 import ChatAnalyzer from './ChatAnalyzer';
+import { Dialog, DialogTitle, DialogContent, IconButton, Typography } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
 
 interface EmailProcessorProps {
   accessToken: string;
@@ -33,6 +35,147 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
   const [showOrganizeDialog, setShowOrganizeDialog] = useState(false);
   const [tempFolderName, setTempFolderName] = useState('');
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [viewAttachment, setViewAttachment] = useState<{
+    messageId: string;
+    attachmentId: string;
+    filename: string;
+    content: string;
+    type: 'document' | 'excel';
+  } | null>(null);
+  const chatAnalyzerRef = useRef<any>(null);
+  const handleViewAttachment = async (messageId: string, attachmentId: string, filename: string) => {
+    try {
+      const response = await fetch(
+        `https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachmentId}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`
+          }
+        }
+      );
+  
+      if (!response.ok) {
+        throw new Error('Failed to fetch attachment');
+      }
+  
+      const data = await response.json();
+      const base64Data = data.data.replace(/-/g, '+').replace(/_/g, '/');
+      const fileExtension = filename.split('.').pop()?.toLowerCase();
+      
+      if (fileExtension === 'xlsx' || fileExtension === 'xls' || fileExtension === 'docx' || fileExtension === 'doc') {
+        // First create the file metadata
+        const metadataResponse = await fetch('https://www.googleapis.com/drive/v3/files', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: filename,
+            mimeType: fileExtension === 'xlsx' || fileExtension === 'xls' 
+              ? 'application/vnd.google-apps.spreadsheet'
+              : 'application/vnd.google-apps.document'
+          })
+        });
+  
+        if (!metadataResponse.ok) {
+          throw new Error('Failed to create file metadata');
+        }
+  
+        const { id: fileId } = await metadataResponse.json();
+  
+        // Then upload the file content
+        const uploadResponse = await fetch(
+          `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, 
+          {
+            method: 'PATCH',
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Content-Type': fileExtension === 'xlsx' || fileExtension === 'xls'
+                ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            },
+            body: Uint8Array.from(atob(base64Data), c => c.charCodeAt(0))
+          }
+        );
+  
+        if (!uploadResponse.ok) {
+          throw new Error('Failed to upload file content');
+        }
+  
+        // Use appropriate viewer URL
+        const viewerUrl = fileExtension === 'xlsx' || fileExtension === 'xls'
+          ? `https://docs.google.com/spreadsheets/d/${fileId}/preview`
+          : `https://docs.google.com/document/d/${fileId}/preview`;
+        
+        setViewAttachment({
+          messageId,
+          attachmentId,
+          filename,
+          content: viewerUrl,
+          type: 'document'  // Keep type as 'document' for consistent UI
+        });
+      } else {
+        // For other files (PDF, images, etc.), use data URL approach
+        let mimeType = 'application/octet-stream';
+        switch (fileExtension) {
+          case 'pdf':
+            mimeType = 'application/pdf';
+            break;
+          case 'jpg':
+          case 'jpeg':
+            mimeType = 'image/jpeg';
+            break;
+          case 'png':
+            mimeType = 'image/png';
+            break;
+          default:
+            mimeType = 'application/octet-stream';
+        }
+        
+        setViewAttachment({
+          messageId,
+          attachmentId,
+          filename,
+          content: `data:${mimeType};base64,${base64Data}`,
+          type: 'document'
+        });
+      }
+    } catch (err) {
+      console.error('Error viewing attachment:', err);
+      setError('Failed to view attachment. Please try again.');
+    }
+  };
+  
+  const handleChatForAttachment = (filename: string) => {
+    setIsChatOpen(true); // Set this first
+    
+    // Then check if we have a currentFolder
+    if (currentFolder?.id && chatAnalyzerRef.current) {
+      // Reset chat to focus on the specific file
+      chatAnalyzerRef.current.resetChat(filename);
+    } else {
+      // If attachments are not yet moved to drive, just scroll to chat
+      const chatElement = document.getElementById('chat-window');
+      if (chatElement) {
+        chatElement.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
+  };
+
+  useEffect(() => {
+    // Add handlers to window object
+    (window as any).handleViewAttachment = handleViewAttachment;
+    (window as any).handleChatForAttachment = handleChatForAttachment;
+    (window as any).downloadAttachment = downloadAttachment;
+  
+    return () => {
+      // Clean up
+      delete (window as any).handleViewAttachment;
+      delete (window as any).handleChatForAttachment;
+      delete (window as any).downloadAttachment;
+    };
+  }, []);
 
   const isValidEmail = (email: string): boolean => {
     const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -156,6 +299,7 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
 
       const mainFolder = await mainFolderResponse.json();
       setCurrentFolder({ id: mainFolder.id, name: customFolderName });
+      setIsChatOpen(true);
 
       // Group attachments by year and month
       const attachmentsByDate: { [year: string]: { [month: string]: { monthName: string, emails: { email: typeof emailDetails[0], attachments: typeof emailDetails[0]['attachments'] }[] } } } = {};
@@ -340,6 +484,7 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
 
       const folder = await folderResponse.json();
       setCurrentFolder({ id: folder.id, name: folderName });
+      setIsChatOpen(true);
 
       // Calculate total attachments for progress
       const totalAttachments = emailDetails.reduce((sum, email) => sum + email.attachments.length, 0);
@@ -426,6 +571,8 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
     setEmailDetails([]);
     setShowFolderDialog(false); // Reset folder dialog when searching new email
     setFolderName(''); // Reset folder name
+    setIsChatOpen(false); // Close chat when starting new search
+setCurrentFolder(null); // Reset current folder
 
     try {
       const searchQuery = encodeURIComponent(`has:attachment ${getSearchQuery(searchInput)}`);
@@ -543,25 +690,46 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
                   <div>
                     <strong style="color: #444;">Attachments:</strong>
                     ${detail.attachments.length > 0 ? `
-                      <div style="margin-top: 8px; margin-left: 8px;">
-                        ${detail.attachments.map((att, index) => `
-                          <div style="margin-bottom: 8px; display: flex; align-items: center;">
-                            <span style="width: 24px; height: 24px; background: #f5f5f5; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 8px; font-size: 12px; color: #666;">
-                              ${index + 1}
-                            </span>
-                            <a 
-                              href="#" 
-                              onclick="downloadAttachment('${att.messageId}', '${att.attachmentId}', '${att.filename}'); return false;"
-                              style="color: #1976d2; text-decoration: none; font-size: 14px; display: flex; align-items: center;"
-                              onmouseover="this.style.textDecoration='underline'"
-                              onmouseout="this.style.textDecoration='none'"
-                            >
-                              ${att.filename}
-                            </a>
-                          </div>
-                        `).join('')}
-                      </div>
-                    ` : '<span style="color: #666; font-style: italic;">No attachments</span>'}
+  <div style="margin-top: 8px; margin-left: 8px;">
+    ${detail.attachments.map((att, index) => `
+      <div style="margin-bottom: 8px; display: flex; align-items: center;">
+        <span style="width: 24px; height: 24px; background: #f5f5f5; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 8px; font-size: 12px; color: #666;">
+          ${index + 1}
+        </span>
+        <span style="color: #666; flex-grow: 1;">${att.filename}</span>
+        <div style="display: flex; gap: 12px; margin-left: 12px;">
+          <a 
+            href="#" 
+            onclick="handleViewAttachment('${att.messageId}', '${att.attachmentId}', '${att.filename}'); return false;"
+            style="color: #1976d2; text-decoration: none; font-size: 14px;"
+            onmouseover="this.style.textDecoration='underline'"
+            onmouseout="this.style.textDecoration='none'"
+          >
+            View
+          </a>
+          <a 
+            href="#" 
+            onclick="downloadAttachment('${att.messageId}', '${att.attachmentId}', '${att.filename}'); return false;"
+            style="color: #1976d2; text-decoration: none; font-size: 14px;"
+            onmouseover="this.style.textDecoration='underline'"
+            onmouseout="this.style.textDecoration='none'"
+          >
+            Download
+          </a>
+          <a 
+            href="#" 
+            onclick="handleChatForAttachment('${att.filename}'); return false;"
+            style="color: #1976d2; text-decoration: none; font-size: 14px;"
+            onmouseover="this.style.textDecoration='underline'"
+            onmouseout="this.style.textDecoration='none'"
+          >
+            Chat
+          </a>
+        </div>
+      </div>
+    `).join('')}
+  </div>
+` : '<span style="color: #666; font-style: italic;">No attachments</span>'}
                   </div>
                 </div>
               </div>
@@ -842,14 +1010,61 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
         </>
       )}
 
-      {currentFolder && (
-        <ChatAnalyzer
-          accessToken={accessToken}
-          folderId={currentFolder.id}
-          folderName={currentFolder.name}
-          onChatToggle={handleChatToggle}
+{viewAttachment && (
+  <Dialog
+    open={true}
+    onClose={() => setViewAttachment(null)}
+    maxWidth="md"
+    fullWidth
+  >
+    <DialogTitle>
+      <Box display="flex" justifyContent="space-between" alignItems="center">
+        <Typography variant="h6">{viewAttachment.filename}</Typography>
+        <IconButton onClick={() => setViewAttachment(null)}>
+          <CloseIcon />
+        </IconButton>
+      </Box>
+    </DialogTitle>
+    <DialogContent>
+  <Box sx={{ p: 2, height: '70vh', overflow: 'hidden' }}>
+    {viewAttachment.type === 'excel' ? (
+      <iframe
+        src={viewAttachment.content}
+        style={{ 
+          width: '100%', 
+          height: '100%', 
+          border: 'none',
+          backgroundColor: '#f8f9fa'
+        }}
+        title={viewAttachment.filename}
+      />
+    ) : (
+      <object
+        data={viewAttachment.content}
+        type="application/pdf"
+        style={{ width: '100%', height: '100%' }}
+      >
+        <iframe
+          src={viewAttachment.content}
+          style={{ width: '100%', height: '100%', border: 'none' }}
+          title={viewAttachment.filename}
         />
-      )}
+      </object>
+    )}
+  </Box>
+</DialogContent>
+  </Dialog>
+)}
+
+{isChatOpen && (
+  <ChatAnalyzer
+    ref={chatAnalyzerRef}
+    accessToken={accessToken}
+    folderId={currentFolder?.id || ''}
+    folderName={currentFolder?.name || 'Attachments'}
+    onChatToggle={handleChatToggle}
+  />
+)}
 
       {error && (
         <Alert 

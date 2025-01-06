@@ -26,8 +26,9 @@ declare global {
 }
 
 const config = {
-  clientId: '341481391326-253sju86761fgk7pkkf6tlgievnj5eqp.apps.googleusercontent.com',
-  apiKey: 'AIzaSyBPKu02MYi7QBnIogUY73G0g6wUgtF7A40',
+  clientId: '911535400392-1mgjknork9g4sombp5ibt2223g1f10ik.apps.googleusercontent.com',
+  apiKey: 'AIzaSyDgIa9XP5TVN6wIwlu40G5mWsnjdsIdE6M',
+  scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive.file'
 };
 
 export default function Home() {
@@ -73,7 +74,7 @@ export default function Home() {
       
       client.initTokenClient({
         client_id: config.clientId,
-        scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/drive',
+        scope: config.scope,
         callback: (response) => {
           if (response.access_token) {
             setAccessToken(response.access_token);

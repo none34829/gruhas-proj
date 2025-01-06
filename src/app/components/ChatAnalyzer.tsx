@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, forwardRef, ForwardedRef } from 'react';
 import {
   Box,
   Paper,
@@ -30,12 +30,25 @@ interface ChatAnalyzerProps {
   onChatToggle?: (isOpen: boolean) => void;
 }
 
-export default function ChatAnalyzer({ accessToken, folderId, folderName, onChatToggle }: ChatAnalyzerProps) {
+export default forwardRef(function ChatAnalyzer(
+  { accessToken, folderId, folderName, onChatToggle }: ChatAnalyzerProps,
+  ref: ForwardedRef<{ resetChat: (filename: string) => void }>
+) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
+  const [currentFile, setCurrentFile] = useState<string | null>(null);
 
+  const resetChat = (filename: string) => {
+    setMessages([]);
+    setCurrentFile(filename);
+    // Add initial message about the specific file
+    setMessages([{
+      role: 'assistant',
+      content: `I'm ready to help you analyze ${filename}. What would you like to know about it?`
+    }]);
+  };
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -157,6 +170,10 @@ export default function ChatAnalyzer({ accessToken, folderId, folderName, onChat
     setMessages(prev => [...prev, { role: 'assistant', content: response }]);
   };
 
+  if (ref) {
+    ref.current = { resetChat };
+  }
+
   return (
     <Box sx={{ width: '100%', mt: 4 }}>
       <Paper
@@ -252,4 +269,4 @@ export default function ChatAnalyzer({ accessToken, folderId, folderName, onChat
       </Paper>
     </Box>
   );
-}
+});
