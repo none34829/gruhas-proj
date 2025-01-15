@@ -43,7 +43,7 @@ export async function POST(req: Request) {
     }
 
     // Convert array buffer to Buffer
-    const fileBuffer = Buffer.from(response.data);
+    const fileBuffer = Buffer.from(new Uint8Array(response.data as ArrayBuffer));
     console.log('File buffer created, size:', fileBuffer.length);
 
     // Extract and analyze the data

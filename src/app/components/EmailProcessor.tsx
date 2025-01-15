@@ -1,10 +1,18 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { TextField, Button, Alert, CircularProgress, Box } from '@mui/material';
 import ChatAnalyzer from './ChatAnalyzer';
 import { Dialog, DialogTitle, DialogContent, IconButton, Typography } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+
+declare global {
+  interface Window {
+    handleViewAttachment: (messageId: string, attachmentId: string, filename: string) => Promise<void>;
+    handleChatForAttachment: (filename: string) => void;
+    downloadAttachment: (attachmentId: string, messageId: string, filename: string) => void;
+  }
+}
 
 interface EmailProcessorProps {
   accessToken: string;
@@ -21,12 +29,63 @@ interface GmailHeader {
   value: string;
 }
 
+interface EmailDetail {
+  subject: string;
+  from: string;
+  fromName: string;
+  fromEmail: string;
+  date: string;
+  dateForSort: number;
+  formattedDate: string;
+  attachments: Attachment[];
+}
+
+interface GmailAttachmentResponse {
+  data: string;
+  size: number;
+  attachmentId: string;
+}
+
+interface GmailMessage {
+  id: string;
+  threadId: string;
+}
+
+interface GmailPartBody {
+  attachmentId?: string;
+  size?: number;
+  data?: string;
+}
+
+interface GmailPart {
+  partId?: string;
+  mimeType?: string;
+  filename?: string;
+  headers?: GmailHeader[];
+  body?: GmailPartBody;
+  parts?: GmailPart[];
+}
+
+interface GmailPayload {
+  headers: GmailHeader[];
+  parts?: GmailPart[];
+}
+
+interface GmailMessageResponse extends GmailMessage {
+  payload: GmailPayload;
+}
+
+interface GmailListResponse {
+  messages?: GmailMessage[];
+  nextPageToken?: string;
+}
+
 export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
   const [searchInput, setSearchInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
-  const [emailDetails, setEmailDetails] = useState<any[]>([]);
+  const [emailDetails, setEmailDetails] = useState<EmailDetail[]>([]);
   const [folderName, setFolderName] = useState('');
   const [showFolderDialog, setShowFolderDialog] = useState(false);
   const [currentFolder, setCurrentFolder] = useState<{ id: string; name: string } | null>(null);
@@ -42,8 +101,8 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
     content: string;
     type: 'document' | 'excel';
   } | null>(null);
-  const chatAnalyzerRef = useRef<any>(null);
-  const handleViewAttachment = async (messageId: string, attachmentId: string, filename: string) => {
+  const chatAnalyzerRef = useRef<{ resetChat: (filename: string) => void }>(null);
+  const handleViewAttachment = useCallback(async (messageId: string, attachmentId: string, filename: string) => {
     try {
       const response = await fetch(
         `https://www.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${attachmentId}`,
@@ -58,7 +117,7 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
         throw new Error('Failed to fetch attachment');
       }
   
-      const data = await response.json();
+      const data: GmailAttachmentResponse = await response.json();
       const base64Data = data.data.replace(/-/g, '+').replace(/_/g, '/');
       const fileExtension = filename.split('.').pop()?.toLowerCase();
       
@@ -105,7 +164,7 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
   
         // Use appropriate viewer URL
         const viewerUrl = fileExtension === 'xlsx' || fileExtension === 'xls'
-          ? `https://docs.google.com/spreadsheets/d/${fileId}/preview`
+          ? `https://docs.google.com/spreadsheets/d/${fileId}/edit?embedded=true&rm=demo&chrome=true`
           : `https://docs.google.com/document/d/${fileId}/preview`;
         
         setViewAttachment({
@@ -145,9 +204,9 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
       console.error('Error viewing attachment:', err);
       setError('Failed to view attachment. Please try again.');
     }
-  };
+  }, [accessToken]);;
   
-  const handleChatForAttachment = (filename: string) => {
+  const handleChatForAttachment = useCallback((filename: string) => {
     setIsChatOpen(true); // Set this first
     
     // Then check if we have a currentFolder
@@ -161,21 +220,58 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
         chatElement.scrollIntoView({ behavior: 'smooth' });
       }
     }
-  };
+  }, [currentFolder]);
+
+  const downloadAttachment = useCallback(async (messageId: string, attachmentId: string, filename: string) => {
+    try {
+      const response = await fetch(
+        getAttachmentLink(messageId, attachmentId),
+        {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`
+          }
+        }
+      );
+  
+      if (!response.ok) {
+        throw new Error('Failed to fetch attachment');
+      }
+  
+      const data = await response.json();
+      const binaryData = atob(data.data.replace(/-/g, '+').replace(/_/g, '/'));
+      const bytes = new Uint8Array(binaryData.length);
+      for (let i = 0; i < binaryData.length; i++) {
+        bytes[i] = binaryData.charCodeAt(i);
+      }
+  
+      const blob = new Blob([bytes], { type: 'application/octet-stream' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error downloading attachment:', err);
+      setError('Failed to download attachment. Please try again.');
+    }
+  }, [accessToken]);
 
   useEffect(() => {
     // Add handlers to window object
-    (window as any).handleViewAttachment = handleViewAttachment;
-    (window as any).handleChatForAttachment = handleChatForAttachment;
-    (window as any).downloadAttachment = downloadAttachment;
+    window.handleViewAttachment = handleViewAttachment;
+    window.handleChatForAttachment = handleChatForAttachment;
+    window.downloadAttachment = downloadAttachment;
   
     return () => {
-      // Clean up
-      delete (window as any).handleViewAttachment;
-      delete (window as any).handleChatForAttachment;
-      delete (window as any).downloadAttachment;
+      // Clean up by setting to no-op functions instead of deleting
+      window.handleViewAttachment = async () => {};
+      window.handleChatForAttachment = () => {};
+      window.downloadAttachment = () => {};
     };
-  }, []);
+  }, [handleViewAttachment, handleChatForAttachment, downloadAttachment]);
 
   const isValidEmail = (email: string): boolean => {
     const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -232,46 +328,9 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
     }
   };
 
-  const getAttachmentLink = (messageId: string, attachmentId: string, filename: string) => {
+  const getAttachmentLink = (messageId: string, attachmentId: string) => {
     const baseUrl = 'https://www.googleapis.com/gmail/v1/users/me/messages';
     return `${baseUrl}/${messageId}/attachments/${attachmentId}`;
-  };
-
-  const downloadAttachment = async (messageId: string, attachmentId: string, filename: string) => {
-    try {
-      const response = await fetch(
-        getAttachmentLink(messageId, attachmentId, filename),
-        {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`
-          }
-        }
-      );
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch attachment');
-      }
-
-      const data = await response.json();
-      const binaryData = atob(data.data.replace(/-/g, '+').replace(/_/g, '/'));
-      const bytes = new Uint8Array(binaryData.length);
-      for (let i = 0; i < binaryData.length; i++) {
-        bytes[i] = binaryData.charCodeAt(i);
-      }
-
-      const blob = new Blob([bytes], { type: 'application/octet-stream' });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error('Error downloading attachment:', err);
-      setError('Failed to download attachment. Please try again.');
-    }
   };
 
   const createDriveFolder = async (customFolderName: string) => {
@@ -389,7 +448,7 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
           });
 
           // Upload attachments to month folder
-          for (const { email, attachments } of emails) {
+          for (const { attachments } of emails) {
             for (const attachment of attachments) {
               // Get attachment content
               const attachmentResponse = await fetch(
@@ -569,46 +628,46 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
     setError('');
     setStatus('');
     setEmailDetails([]);
-    setShowFolderDialog(false); // Reset folder dialog when searching new email
-    setFolderName(''); // Reset folder name
-    setIsChatOpen(false); // Close chat when starting new search
-setCurrentFolder(null); // Reset current folder
-
+    setShowFolderDialog(false);
+    setFolderName('');
+    setIsChatOpen(false);
+    setCurrentFolder(null);
+  
     try {
       const searchQuery = encodeURIComponent(`has:attachment ${getSearchQuery(searchInput)}`);
       console.log('Search query:', decodeURIComponent(searchQuery));
-
-      let allMessages = [];
-      let pageToken = undefined;
+  
+      let allMessages: GmailMessage[] = [];
+      let pageToken: string | undefined = undefined;
       
       do {
-        const url = `https://www.googleapis.com/gmail/v1/users/me/messages?q=${searchQuery}${pageToken ? `&pageToken=${pageToken}` : ''}`;
-        const response = await fetch(url, {
+        const url: string = `https://www.googleapis.com/gmail/v1/users/me/messages?q=${searchQuery}${pageToken ? `&pageToken=${pageToken}` : ''}`;
+        const response: Response = await fetch(url, {
           headers: {
             'Authorization': `Bearer ${accessToken}`
           }
         });
-
+  
         if (!response.ok) {
           throw new Error('Failed to fetch emails');
         }
-
-        const data = await response.json();
+  
+        const data: GmailListResponse = await response.json();
         if (data.messages) {
           allMessages = allMessages.concat(data.messages);
         }
         pageToken = data.nextPageToken;
       } while (pageToken);
-
+  
       if (allMessages.length === 0) {
         setStatus(`No emails found with attachments from ${searchInput}`);
         return;
       }
-
+  
       setStatus(`Found ${allMessages.length} emails with attachments from ${searchInput}`);
       
       const emailDetails = await Promise.all(
-        allMessages.map(async (msg: any) => {
+        allMessages.map(async (msg: GmailMessage) => {
           const emailResponse = await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${msg.id}`, {
             headers: {
               'Authorization': `Bearer ${accessToken}`
@@ -616,15 +675,15 @@ setCurrentFolder(null); // Reset current folder
           });
           
           if (emailResponse.ok) {
-            const emailData = await emailResponse.json();
+            const emailData: GmailMessageResponse = await emailResponse.json();
             const headers = emailData.payload.headers;
-            const dateStr = headers.find((h: GmailHeader) => h.name === 'Date')?.value || 'Unknown date';
+            const dateStr = headers.find(h => h.name === 'Date')?.value || 'Unknown date';
             
             const attachments: Attachment[] = [];
-            const processPayloadParts = (parts: any[]) => {
+            const processPayloadParts = (parts: GmailPart[]) => {
               if (!parts) return;
               parts.forEach(part => {
-                if (part.filename && part.filename.length > 0) {
+                if (part.filename && part.filename.length > 0 && part.body?.attachmentId) {
                   attachments.push({
                     filename: part.filename,
                     attachmentId: part.body.attachmentId,
@@ -636,21 +695,23 @@ setCurrentFolder(null); // Reset current folder
                 }
               });
             };
-
+  
             if (emailData.payload.parts) {
               processPayloadParts(emailData.payload.parts);
             }
-
-            return {
-              subject: headers.find((h: GmailHeader) => h.name === 'Subject')?.value || 'No subject',
-              from: headers.find((h: GmailHeader) => h.name === 'From')?.value || 'Unknown sender',
-              fromName: headers.find((h: GmailHeader) => h.name === 'From')?.value.split('<')[0].trim() || 'Unknown sender',
-              fromEmail: headers.find((h: GmailHeader) => h.name === 'From')?.value.match(/<(.+?)>/)?.[1] || '',
+  
+            const emailDetail: EmailDetail = {
+              subject: headers.find(h => h.name === 'Subject')?.value || 'No subject',
+              from: headers.find(h => h.name === 'From')?.value || 'Unknown sender',
+              fromName: headers.find(h => h.name === 'From')?.value.split('<')[0].trim() || 'Unknown sender',
+              fromEmail: headers.find(h => h.name === 'From')?.value.match(/<(.+?)>/)?.[1] || '',
               date: dateStr,
               dateForSort: new Date(dateStr).getTime(),
               formattedDate: formatDateToIST(dateStr),
               attachments
             };
+  
+            return emailDetail;
           }
           return null;
         })
@@ -739,7 +800,7 @@ setCurrentFolder(null); // Reset current folder
 
         setStatus(emailContent);
         // Add the download function to window for the onclick handlers
-        (window as any).downloadAttachment = downloadAttachment;
+        window.downloadAttachment = downloadAttachment;
       }
 
     } catch (err) {
@@ -800,6 +861,12 @@ setCurrentFolder(null); // Reset current folder
           Process Emails
         </Button>
       </>
+
+      {loading && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2, mb: 2 }}>
+            <CircularProgress />
+          </Box>
+        )}
 
       {status && (
         <>

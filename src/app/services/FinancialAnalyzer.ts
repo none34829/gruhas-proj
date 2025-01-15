@@ -14,10 +14,6 @@ interface FinancialMetrics {
   [key: string]: number[] | string[] | undefined;
 }
 
-interface ExcelRow {
-  [key: string]: string | number;
-}
-
 export class FinancialAnalyzer {
   private static readonly SUPPORTED_EXTENSIONS = ['.xlsx', '.xls', '.csv'];
 

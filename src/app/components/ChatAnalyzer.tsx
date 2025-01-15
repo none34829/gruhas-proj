@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, forwardRef, ForwardedRef } from 'react';
+import { useState, useRef, useEffect, forwardRef, useImperativeHandle, ForwardedRef } from 'react';
 import {
   Box,
   Paper,
@@ -38,11 +38,9 @@ export default forwardRef(function ChatAnalyzer(
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
-  const [currentFile, setCurrentFile] = useState<string | null>(null);
 
   const resetChat = (filename: string) => {
     setMessages([]);
-    setCurrentFile(filename);
     // Add initial message about the specific file
     setMessages([{
       role: 'assistant',
@@ -170,9 +168,9 @@ export default forwardRef(function ChatAnalyzer(
     setMessages(prev => [...prev, { role: 'assistant', content: response }]);
   };
 
-  if (ref) {
-    ref.current = { resetChat };
-  }
+  useImperativeHandle(ref, () => ({
+    resetChat
+  }));
 
   return (
     <Box sx={{ width: '100%', mt: 4 }}>

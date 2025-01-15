@@ -10,11 +10,17 @@ function App() {
   const [loading, setLoading] = useState(false);
 
   const onSuccess = (response) => {
-    setAccessToken(response.access_token);
-    setIsAuthenticated(true);
+    setLoading(true);
+    try {
+      setAccessToken(response.access_token);
+      setIsAuthenticated(true);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const onError = () => {
+    setLoading(false);
     console.log('Login Failed');
   };
 
@@ -28,11 +34,15 @@ function App() {
           
           {!isAuthenticated ? (
             <Box sx={{ mt: 4 }}>
-              <GoogleLogin
-                onSuccess={onSuccess}
-                onError={onError}
-                scope={config.scope}
-              />
+              {loading ? (
+                <CircularProgress />
+              ) : (
+                <GoogleLogin
+                  onSuccess={onSuccess}
+                  onError={onError}
+                  scope={config.scope}
+                />
+              )}
             </Box>
           ) : (
             <Box sx={{ mt: 4 }}>
