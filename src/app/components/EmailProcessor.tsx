@@ -80,12 +80,32 @@ interface GmailListResponse {
   nextPageToken?: string;
 }
 
+interface FolderItem {
+  id: string;
+  name: string;
+  hasSubfolders?: boolean;
+}
+
+interface FolderState {
+  items: FolderItem[];
+  currentPath: { id: string; name: string }[];
+}
+
+const getAttachmentLink = (messageId: string, attachmentId: string) => {
+  const baseUrl = 'https://www.googleapis.com/gmail/v1/users/me/messages';
+  return `${baseUrl}/${messageId}/attachments/${attachmentId}`;
+};
+
 export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
   const [searchInput, setSearchInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [emailDetails, setEmailDetails] = useState<EmailDetail[]>([]);
+  const [folderState, setFolderState] = useState<FolderState>({
+  items: [],
+  currentPath: []
+});
   const [folderName, setFolderName] = useState('');
   const [showFolderDialog, setShowFolderDialog] = useState(false);
   const [currentFolder, setCurrentFolder] = useState<{ id: string; name: string } | null>(null);
@@ -94,6 +114,9 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
   const [showOrganizeDialog, setShowOrganizeDialog] = useState(false);
   const [tempFolderName, setTempFolderName] = useState('');
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [folders, setFolders] = useState<Array<{id: string, name: string}>>([]);
+  const [showLocationDialog, setShowLocationDialog] = useState(false);
+  const [selectedParentFolder, setSelectedParentFolder] = useState<{id: string, name: string} | null>(null);
   const [viewAttachment, setViewAttachment] = useState<{
     messageId: string;
     attachmentId: string;
@@ -328,9 +351,97 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
     }
   };
 
-  const getAttachmentLink = (messageId: string, attachmentId: string) => {
-    const baseUrl = 'https://www.googleapis.com/gmail/v1/users/me/messages';
-    return `${baseUrl}/${messageId}/attachments/${attachmentId}`;
+  const fetchFolders = async (parentId?: string) => {
+    try {
+      let allFolders: FolderItem[] = [];
+      let nextPageToken: string = '';
+      let apiCallCount = 0;
+  
+      do {
+        apiCallCount++;
+        console.log(`Making API call #${apiCallCount}`);
+  
+        let query: string;
+        if (parentId) {
+          query = `mimeType='application/vnd.google-apps.folder' and trashed=false and '${parentId}' in parents`;
+        } else {
+          // Modified query to explicitly look for root folders
+          query = `mimeType='application/vnd.google-apps.folder' and trashed=false and 'root' in parents`;
+        }
+  
+        // Modified fields parameter to include all necessary fields
+        const queryParams = new URLSearchParams({
+          q: query,
+          fields: 'nextPageToken, files(id, name, parents), incompleteSearch',
+          pageSize: '1000',
+          // Remove orderBy to ensure we get all results
+          spaces: 'drive',  // Added to include all spaces
+          includeItemsFromAllDrives: 'true',  // Added to include items from all drives
+          supportsAllDrives: 'true'  // Added for all drives support
+        });
+  
+        if (nextPageToken) {
+          queryParams.append('pageToken', nextPageToken);
+        }
+  
+        console.log('Current query:', queryParams.toString());
+  
+        const response = await fetch(
+          `https://www.googleapis.com/drive/v3/files?${queryParams}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${accessToken}`,
+              'Accept': 'application/json'
+            }
+          }
+        );
+  
+        if (!response.ok) {
+          throw new Error('Failed to fetch folders');
+        }
+  
+        interface GoogleDriveResponse {
+          files?: FolderItem[];
+          nextPageToken?: string;
+          incompleteSearch?: boolean;
+        }
+
+        interface FolderItem {
+          id: string;
+          name: string;
+          parents?: string[];  // Make parents optional as it might not always be present
+        }
+  
+        const data: GoogleDriveResponse = await response.json();
+        
+        console.log('Found', data.files?.length || 0, 'folders in this page');
+        console.log('Next page token:', data.nextPageToken);
+        console.log('Search complete:', !data.incompleteSearch);
+  
+        if (data.files) {
+          // Filter to ensure we only get root folders when no parentId is provided
+          const relevantFolders = parentId 
+            ? data.files 
+            : data.files.filter(file => file.parents && file.parents[0] === 'root');
+          
+          allFolders = [...allFolders, ...relevantFolders];
+        }
+  
+        nextPageToken = data.nextPageToken || '';
+        console.log(`Total folders found so far: ${allFolders.length}`);
+  
+      } while (nextPageToken);
+  
+      console.log(`Final total number of folders: ${allFolders.length}`);
+      
+      // Sort folders alphabetically
+      allFolders.sort((a, b) => a.name.localeCompare(b.name));
+      
+      setFolders(allFolders);
+    } catch (err) {
+      console.error('Error fetching folders:', err);
+      setError('Failed to fetch folders. Please try again.');
+    }
   };
 
   const createDriveFolder = async (customFolderName: string) => {
@@ -348,7 +459,8 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
         },
         body: JSON.stringify({
           name: customFolderName,
-          mimeType: 'application/vnd.google-apps.folder'
+          mimeType: 'application/vnd.google-apps.folder',
+          ...(selectedParentFolder ? { parents: [selectedParentFolder.id] } : {})
         })
       });
 
@@ -533,7 +645,8 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
         },
         body: JSON.stringify({
           name: folderName,
-          mimeType: 'application/vnd.google-apps.folder'
+          mimeType: 'application/vnd.google-apps.folder',
+          ...(selectedParentFolder ? { parents: [selectedParentFolder.id] } : {})
         })
       });
 
@@ -819,6 +932,27 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
     setShowFolderDialog(true);
   };
 
+  const handleNavigateToSubfolder = async (folderId: string, folderName: string) => {
+  setFolderState(prev => ({
+    ...prev,
+    currentPath: [...prev.currentPath, { id: folderId, name: folderName }]
+  }));
+  await fetchFolders(folderId);
+};
+
+const handleNavigateBack = async () => {
+  setFolderState(prev => {
+    const newPath = [...prev.currentPath];
+    newPath.pop();
+    const parentId = newPath.length > 0 ? newPath[newPath.length - 1].id : undefined;
+    fetchFolders(parentId);
+    return {
+      ...prev,
+      currentPath: newPath
+    };
+  });
+};
+
   return (
     <Box sx={{ mt: 2 }}>
       <>
@@ -924,25 +1058,26 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
                     }}
                   />
                   <Box sx={{ position: 'relative', display: 'inline-flex' }}>
-                    <Button
-                      variant="contained"
-                      onClick={() => {
-                        setTempFolderName(folderName || searchInput);
-                        setShowOrganizeDialog(true);
-                      }}
-                      disabled={isMoving}
-                      sx={{
-                        textTransform: 'none',
-                        py: 1.5,
-                        backgroundColor: isMoving ? '#f1f3f4' : '#34a853',
-                        '&:hover': {
-                          backgroundColor: isMoving ? '#f1f3f4' : '#2d8d47'
-                        },
-                        minWidth: '120px'
-                      }}
-                    >
-                      {isMoving ? `${moveProgress}%` : 'Create & Move'}
-                    </Button>
+                  <Button
+  variant="contained"
+  onClick={() => {
+    setTempFolderName(folderName || searchInput);
+    fetchFolders();
+    setShowLocationDialog(true);
+  }}
+  disabled={isMoving}
+  sx={{
+    textTransform: 'none',
+    py: 1.5,
+    backgroundColor: isMoving ? '#f1f3f4' : '#34a853',
+    '&:hover': {
+      backgroundColor: isMoving ? '#f1f3f4' : '#2d8d47'
+    },
+    minWidth: '120px'
+  }}
+>
+  {isMoving ? `${moveProgress}%` : 'Create & Move'}
+</Button>
                     {isMoving && (
                       <Box
                         sx={{
@@ -966,7 +1101,6 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
                     disabled={isMoving}
                     sx={{
                       textTransform: 'none',
-                      borderRadius: 2,
                       py: 1.5,
                       borderColor: '#dadce0',
                       color: '#3c4043',
@@ -1076,6 +1210,160 @@ export default function EmailProcessor({ accessToken }: EmailProcessorProps) {
           )}
         </>
       )}
+
+{showLocationDialog && (
+  <>
+    <Box
+      sx={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        backdropFilter: 'blur(4px)',
+        zIndex: 9998
+      }}
+      onClick={() => setShowLocationDialog(false)}
+    />
+    <Box
+      sx={{
+        position: isChatOpen ? 'fixed' : 'absolute',
+        ...(isChatOpen ? {
+          top: '50%',
+          transform: 'translate(-50%, -50%)',
+        } : {
+          bottom: 50,
+          transform: 'translateX(-50%)',
+        }),
+        left: '50%',
+        backgroundColor: '#fff',
+        borderRadius: 2,
+        boxShadow: '0px 4px 20px rgba(0, 0, 0, 0.1)',
+        p: 3,
+        width: '400px',
+        maxWidth: '90%',
+        zIndex: 9999
+      }}
+    >
+      <Box sx={{ mb: 2, fontSize: '1.25rem', fontWeight: 500, color: '#1a73e8' }}>
+        Where would you like to create &quot;{tempFolderName}&quot;?
+      </Box>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <Button
+          variant="contained"
+          onClick={() => {
+            setSelectedParentFolder(null);
+            setShowLocationDialog(false);
+            setShowOrganizeDialog(true);
+          }}
+          sx={{
+            textTransform: 'none',
+            py: 1.5,
+            backgroundColor: '#34a853',
+            '&:hover': { backgroundColor: '#2d8d47' }
+          }}
+        >
+          Create as New Folder in Drive
+        </Button>
+        
+        <Typography sx={{ mt: 1, mb: 1, fontWeight: 500 }}>
+          Or select an existing folder:
+        </Typography>
+        
+        <Box sx={{ maxHeight: '200px', overflow: 'auto', border: '1px solid #dadce0', borderRadius: 1 }}>
+    {folderState.currentPath.length > 0 && (
+      <Button
+        fullWidth
+        onClick={handleNavigateBack}
+        sx={{
+          textTransform: 'none',
+          py: 1.5,
+          justifyContent: 'flex-start',
+          px: 2,
+          borderBottom: '1px solid #dadce0',
+          color: '#3c4043',
+          '&:hover': { backgroundColor: '#f8f9fa' }
+        }}
+      >
+        ← Back to {folderState.currentPath[folderState.currentPath.length - 1]?.name || 'Root'}
+      </Button>
+    )}
+    
+    {folders.map(folder => (
+      <Box
+        key={folder.id}
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          borderBottom: '1px solid #dadce0',
+          '&:last-child': { borderBottom: 'none' }
+        }}
+      >
+        <Button
+          fullWidth
+          onClick={() => {
+            setSelectedParentFolder(folder);
+            setShowLocationDialog(false);
+            setShowOrganizeDialog(true);
+          }}
+          sx={{
+            textTransform: 'none',
+            py: 1.5,
+            px: 2,
+            color: '#3c4043',
+            '&:hover': { backgroundColor: '#f8f9fa' },
+            flexGrow: 1,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}
+        >
+          <span>{folder.name}</span>
+          <span style={{ color: '#1a73e8', marginLeft: '8px' }}>Select This Folder</span>
+        </Button>
+        
+        <Button
+          onClick={() => handleNavigateToSubfolder(folder.id, folder.name)}
+          sx={{
+            minWidth: 'auto',
+            px: 2,
+            borderLeft: '1px solid #dadce0',
+            borderRadius: 0,
+            height: '100%',
+            color: '#1a73e8'
+          }}
+        >
+          Browse
+        </Button>
+      </Box>
+    ))}
+  </Box>
+
+        <Button
+          variant="outlined"
+          onClick={() => {
+            setShowLocationDialog(false);
+            setSelectedParentFolder(null);
+          }}
+          sx={{
+            textTransform: 'none',
+            py: 1.5,
+            mt: 1,
+            borderColor: '#dadce0',
+            color: '#3c4043',
+            '&:hover': {
+              borderColor: '#dadce0',
+              backgroundColor: '#f1f3f4'
+            }
+          }}
+        >
+          Cancel
+        </Button>
+      </Box>
+    </Box>
+  </>
+)}
 
 {viewAttachment && (
   <Dialog
